@@ -35,7 +35,10 @@ public:
         delete renderDelegate;
     }
 #if PXR_VERSION >= 2302
-    bool IsSupported(bool gpuEnabled = true) const override {
+    bool IsSupported(const pxr::HdRendererCreateArgsSchema &, std::string * = nullptr) const override {
+        return IsSupported(true);
+    }
+    bool IsSupported(bool gpuEnabled = true) const {
         return true;
     }
 #else
