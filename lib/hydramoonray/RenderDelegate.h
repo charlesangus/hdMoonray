@@ -179,6 +179,11 @@ public:
     pxr::TfToken GetMaterialNetworkSelector() const override
         { static pxr::TfToken tt("moonray"); return tt; }
 
+    /// Scene indices pick a material's terminals by render context rather than by the network
+    /// selector, so "moonray" is named here too; UsdImaging falls back to the universal outputs
+    /// when a material has no outputs:moonray:* terminal.
+    pxr::TfTokenVector GetMaterialRenderContexts() const override;
+
     /// This function returns the default AOV descriptor for a given named AOV.
     /// This mechanism lets the renderer decide things like what format
     /// a given AOV will be written as.

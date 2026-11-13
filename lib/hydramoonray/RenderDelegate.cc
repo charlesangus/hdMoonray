@@ -194,6 +194,12 @@ RenderDelegate::GetSupportedBprimTypes() const
     return SUPPORTED_BPRIM_TYPES;
 }
 
+pxr::TfTokenVector
+RenderDelegate::GetMaterialRenderContexts() const
+{
+    return {pxr::TfToken("moonray")};
+}
+
 pxr::HdResourceRegistrySharedPtr
 RenderDelegate::GetResourceRegistry() const
 {
