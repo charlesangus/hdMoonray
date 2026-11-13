@@ -19,6 +19,7 @@
 
 #include <pxr/imaging/hd/extComputation.h>
 #include <pxr/base/gf/vec2f.h>
+#include <pxr/base/tf/errorMark.h>
 #include <pxr/usdImaging/usdImaging/delegate.h>
 
 #include <scene_rdl2/common/except/exceptions.h>
@@ -780,7 +781,11 @@ void RenderDelegate::setForcePolygon(bool v)
 
 void RenderDelegate::markAllRprimsDirty(pxr::HdDirtyBits bits)
 {
-    if (mRenderIndex) mRenderIndex->GetChangeTracker().MarkAllRprimsDirty(bits);
+    if (mRenderIndex) {
+        pxr::TfErrorMark mark;
+        mRenderIndex->GetChangeTracker().MarkAllRprimsDirty(bits);
+        mark.Clear();
+    }
 }
 
 }
