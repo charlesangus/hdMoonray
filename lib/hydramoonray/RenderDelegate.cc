@@ -257,6 +257,10 @@ RenderDelegate::CreateRenderPass(pxr::HdRenderIndex *renderIndex,
                                  pxr::HdRprimCollection const& collection)
 {
     mRenderIndex = renderIndex;
+    if (mDisableLighting) {
+        for (auto& p : mLights)
+            mRenderIndex->GetChangeTracker().MarkSprimDirty(p->GetId(), pxr::HdLight::DirtyBits::AllDirty);
+    }
     return pxr::HdRenderPassSharedPtr(new RenderPass(renderIndex, collection, this));
 }
 
@@ -722,7 +726,8 @@ void RenderDelegate::setDisableLighting(bool v)
         // dirty all the lights, which will cause them to call add/removeLight and
         // that will turn the default light on/off
         for (auto& p : mLights)
-            mRenderIndex->GetChangeTracker().MarkSprimDirty(p->GetId(), pxr::HdLight::DirtyBits::AllDirty);
+            if (mRenderIndex)
+                mRenderIndex->GetChangeTracker().MarkSprimDirty(p->GetId(), pxr::HdLight::DirtyBits::AllDirty);
     }
 }
 
