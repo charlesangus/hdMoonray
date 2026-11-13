@@ -12,9 +12,13 @@
             "continuous": "false",
             "dso": "@COMPUTATION_PROGMCRT_DISPATCH_LIB@",
             "fps": 12,
+            "traceThreshold": -1,
             "requirements": {
                 "packaging_system": "current-environment",
-                "computationAPI": "4.x"
+                "computationAPI": "4.x",
+                "resources": {
+                    "logLevel": 1
+                }
             },
             "messages": {
                 "(client)": {
@@ -41,6 +45,7 @@
             "arrayExpand": 2,
             "dso": "@COMPUTATION_PROGMCRT_LIB@",
             "fps": 12,
+            "traceThreshold": -1,
             "imageEncoding": 3,
             "machineId": "$arrayIndex",
             "numMachines": "$arrayNumber",
@@ -52,7 +57,8 @@
                 "resources": {
                     "maxCores": "*",
                     "minCores": 1.0,
-                    "memoryMB": 16384
+                    "memoryMB": 16384,
+                    "logLevel": 1
                 }
             },
             "messages": {
@@ -77,12 +83,16 @@
         "merge": {
             "dso": "@COMPUTATION_PROGMCRT_MERGE_LIB@",
             "fps": 12,
+            "traceThreshold": -1,
             "imageEncoding": 3,
             "initialCredit": 2,
             "sendCredit": true,
             "requirements": {
                 "packaging_system": "current-environment",
-                "computationAPI": "4.x"
+                "computationAPI": "4.x",
+                "resources": {
+                    "logLevel": 1
+                }
             },
             "messages": {
                 "(client)": {

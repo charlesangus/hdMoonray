@@ -10,6 +10,7 @@
             "dso": "@COMPUTATION_PROGMCRT_LIB@",
             "entry": "yes",
             "fps": 12,
+            "traceThreshold": -1,
             "imageEncoding": 3,
             "initialCredit": 2,
             "machineId": 0,
@@ -19,7 +20,8 @@
                 "resources": {
                     "maxCores": "*",
                     "minCores": 1.0,
-                    "memoryMB": 16384.0
+                    "memoryMB": 16384.0,
+                    "logLevel": 1
                 }
             },
             "messages": {
