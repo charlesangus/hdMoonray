@@ -312,6 +312,7 @@ RenderBuffer::bind(const pxr::HdRenderPassAovBinding& aovBinding, const Camera* 
                         ro.setMathFilter(mRenderOutput->MATH_FILTER_MIN);
                         if (mAovName == pxr::HdAovTokens->depth) {
                             mDepth = true; // process to OpenGL type clip space
+                            ro.setChannelName("hydraDepth");
                         }
                     }
                 }
