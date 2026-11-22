@@ -121,6 +121,21 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
         wsv.set(sv.sImageHeight, h);
     }
 
+    const pxr::SdfPath& dicingPath = renderDelegate.getDicingCamera();
+    scene_rdl2::rdl2::SceneObject* dicingCamera = nullptr;
+    if (not dicingPath.IsEmpty()) {
+        dicingCamera = Camera::createCamera(camera->getSceneDelegate(), renderDelegate, dicingPath);
+        if (not dicingCamera && dicingPath != mWarnedDicingCamera) {
+            Logger::warn(dicingPath, ": dicing camera not found, dicing from the render camera");
+            mWarnedDicingCamera = dicingPath;
+        }
+    }
+    if (dicingCamera != sv.get(sv.sDicingCamera)) {
+        scene_rdl2::rdl2::SceneVariables& wsv(renderDelegate.acquireSceneContext().getSceneVariables());
+        UpdateGuard guard(wsv);
+        wsv.set(sv.sDicingCamera, dicingCamera);
+    }
+
     // const pxr::GfMatrix4d& view = renderPassState->GetWorldToViewMatrix(); // same as camera->GetViewMatrix()
     // // This matrix contains info that is *not* in the Camera, to make the pixels square in the viewport:
     // const pxr::GfMatrix4d& proj = renderPassState->GetProjectionMatrix();

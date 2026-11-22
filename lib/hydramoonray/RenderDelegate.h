@@ -285,6 +285,12 @@ public:
     bool getEnableMotionBlur() const { return mEnableMotionBlur; }
     void setEnableMotionBlur(bool v) { mEnableMotionBlur = v; }
     bool getForcePolygon() const {return mForcePolygon;}
+    float getMeshResolution() const { return mMeshResolution; }
+    float getAdaptiveError() const { return mAdaptiveError; }
+    void setSubdivisionDicing(float meshResolution, float adaptiveError);
+    // Empty for the render camera.
+    const pxr::SdfPath& getDicingCamera() const { return mDicingCamera; }
+    void setDicingCamera(const pxr::SdfPath& path) { mDicingCamera = path; }
 
     bool getPruneProcedural(const std::string& rdlName) const
         { return mPrunedProcedurals.count(rdlName) > 0; }
@@ -327,6 +333,9 @@ private:
     bool mDecodeNormalsChanged = false;
     bool mEnableMotionBlur = false;
     bool mForcePolygon = false;
+    float mMeshResolution = 2.0f;
+    float mAdaptiveError = 0.0f;
+    pxr::SdfPath mDicingCamera;
     std::set<std::string> mPrunedProcedurals; // stores RDL2 name
     bool mPruneVolume = false;
     bool mDisableRender = false;

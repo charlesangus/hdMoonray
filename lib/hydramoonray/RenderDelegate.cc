@@ -790,6 +790,15 @@ void RenderDelegate::setForcePolygon(bool v)
     }
 }
 
+void RenderDelegate::setSubdivisionDicing(float meshResolution, float adaptiveError)
+{
+    if (meshResolution != mMeshResolution || adaptiveError != mAdaptiveError) {
+        mMeshResolution = meshResolution;
+        mAdaptiveError = adaptiveError;
+        markAllRprimsDirty(pxr::HdChangeTracker::DirtySubdivTags);
+    }
+}
+
 void RenderDelegate::markAllRprimsDirty(pxr::HdDirtyBits bits)
 {
     if (mRenderIndex) {

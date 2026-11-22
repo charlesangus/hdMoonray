@@ -5,8 +5,8 @@
 // RDL attributes that don't have an equivalent in Mesh are set to
 // an automatic default, but may be overridden by primvars of the form
 // "moonray:xyz":
-//  - mesh_resolution def: 1 << refineLevel
-//  - adaptive_error def: 0.0 or 1.0
+//  - mesh_resolution def: the natron:meshResolution render setting, 1 for a polygon mesh
+//  - adaptive_error def: the natron:adaptiveError render setting; for a polygon mesh 0.0 or 1.0
 //  - smooth_normal def: false
 // Supports "uv" or "st" for texture coords, and 
 // "normal" or "normals" for normals
@@ -196,26 +196,21 @@ Mesh::syncSubdivScheme(const HdMeshTopology& topology,
     TfToken subdScheme = topology.GetScheme();
     int rdlScheme = rdlSubdSchemeCatClark; // moonray default
     if (subdScheme == PxOsdOpenSubdivTokens->bilinear) rdlScheme = rdlSubdSchemeBilinear;
-    // scheme "loop" is not supported by Moonray, and replaced by "catClark"
     geometry()->set(rdlAttrSubdScheme, rdlScheme);
 
-    // This is the "complexity" menu item in usdview (low=0, medium=1, ...)
-    // There is a topology.GetRefineLevel() but it appears to always be a copy of
-    // the parameter (which defaults to 0) sent to GetMeshTopology()
-    int refineLevel = GetDisplayStyle(sceneDelegate).refineLevel;
-
-    // subd is disabled if 
+    // subd is disabled if
     // - the repr has flat shading enabled
-    // - the refine level is < 1
     // - the "forcePolgon" render setting is on, or
     // - the subd scheme is "none"
     bool disableSubd = _GetReprDesc(reprToken)[0].flatShadingEnabled ||
-                       refineLevel < 1 ||
                        renderDelegate.getForcePolygon() ||
                        subdScheme == PxOsdOpenSubdivTokens->none;
 
-
     geometry()->set(rdlAttrIsSubd, !disableSubd);
+
+    if (not disableSubd && subdScheme == PxOsdOpenSubdivTokens->loop) {
+        Logger::warn(GetId(), ": Loop subdivision is rendered as Catmull-Clark");
+    }
 
     // mesh resolution, adaptive error and smooth_normals can be overridden
     // by primvars, so check before overwriting
@@ -223,14 +218,16 @@ Mesh::syncSubdivScheme(const HdMeshTopology& topology,
     static TfToken adaptiveErrorToken("moonray:adaptive_error");
     static TfToken smoothNormalToken("moonray:smooth_normal");
 
+    // A polygon mesh keeps the values it has always had, so its tessellation for displacement
+    // does not change with the subdivision settings.
     if (not isPrimvarUsed(meshResolutionToken)) {
-        // to match Storm, use 1 << refineLevel for resolution
-        float rdlResolution = 1 << refineLevel;
+        float rdlResolution = disableSubd ? 1.0f : renderDelegate.getMeshResolution();
         geometry()->set(rdlAttrMeshResolution, rdlResolution);
     }
 
     if (not isPrimvarUsed(adaptiveErrorToken)) {
-        float adaptive_error = topology.IsEnabledAdaptive() ? 1.0f : 0.0f;
+        float adaptive_error = disableSubd ? (topology.IsEnabledAdaptive() ? 1.0f : 0.0f) :
+                               renderDelegate.getAdaptiveError();
         geometry()->set(rdlAttrAdaptiveError, adaptive_error);
     }
 

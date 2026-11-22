@@ -31,6 +31,9 @@ TF_DEFINE_PRIVATE_TOKENS(Tokens,
     (pruneVolume)
     (pruneWrapDeform)
     (forcePolygon)
+    ((meshResolution, "natron:meshResolution"))
+    ((adaptiveError, "natron:adaptiveError"))
+    ((dicingCamera, "natron:dicingCamera"))
     (executionMode)
 );
 
@@ -58,6 +61,9 @@ RenderSettings::addDescriptors(HdRenderSettingDescriptorList& descriptorList) co
         { "Prune WrapDeform",     Tokens->pruneWrapDeform,     VtValue(getEnv("HDMOONRAY_PRUNE_WRAPDEFORM", false)) },
         { "Prune CurveDeform",    Tokens->pruneCurveDeform,    VtValue(getEnv("HDMOONRAY_PRUNE_CURVEDEFORM", false)) },
         { "Force Polygon",        Tokens->forcePolygon,        VtValue(getEnv("HDMOONRAY_FORCE_POLYGON", false)) },
+        { "Mesh Resolution",      Tokens->meshResolution,      VtValue(2.0f) },
+        { "Adaptive Error",       Tokens->adaptiveError,       VtValue(0.0f) },
+        { "Dicing Camera",        Tokens->dicingCamera,        VtValue(std::string()) },
         { "Execution Mode",       Tokens->executionMode,       VtValue(getEnv("HDMOONRAY_EXEC_MODE", "auto")) },
     };
     for (const auto& desc : descriptors) {
@@ -134,6 +140,10 @@ void RenderSettings::apply()
     mDelegate.setPruneProcedural("WrapDeformGeometry", get<bool>(Tokens->pruneWrapDeform));
     mDelegate.setPruneVolume(get<bool>(Tokens->pruneVolume));
     mDelegate.setForcePolygon(get<bool>(Tokens->forcePolygon));
+    mDelegate.setSubdivisionDicing(get<float>(Tokens->meshResolution), get<float>(Tokens->adaptiveError));
+    const std::string dicingCamera = get<std::string>(Tokens->dicingCamera);
+    mDelegate.setDicingCamera(dicingCamera.empty() || !SdfPath::IsValidPathString(dicingCamera) ?
+                              SdfPath() : SdfPath(dicingCamera));
     setDeepIdAttributeName();
 
 }
