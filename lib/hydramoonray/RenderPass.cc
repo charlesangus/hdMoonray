@@ -96,10 +96,8 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
             motionSteps[1] = float(interval.GetMax()) - frame;
         }
     } else {
-        std::pair<float, float> interval =
-            const_cast<Camera*>(camera)->getTimeSamplingInterval();
-        motionSteps[0] = interval.first;
-        motionSteps[1] = interval.second;
+        motionSteps[0] = float(camera->GetShutterOpen());
+        motionSteps[1] = float(camera->GetShutterClose());
     }
 
     const bool motionBlur = renderDelegate.getEnableMotionBlur() &&
