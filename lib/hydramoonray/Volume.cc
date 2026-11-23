@@ -6,6 +6,7 @@
 #include "HdmLog.h"
 #include "pxr/usd/sdf/types.h" // for SdfAssetPath
 #include <scene_rdl2/scene/rdl2/Geometry.h>
+#include <algorithm>
 #include <iostream>
 
 using namespace pxr;
@@ -49,6 +50,10 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
     static const TfToken velocityToken("velocity");
     
     auto fields(sceneDelegate->GetVolumeFieldDescriptors(GetId()));
+    mFieldIds.clear();
+    for (auto& desc: fields) {
+        mFieldIds.push_back(desc.fieldId);
+    }
     const std::string* filePath = nullptr;
     for (auto& desc: fields) {
         const OpenVdbAsset* const field =
@@ -85,6 +90,12 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
    
 }
 
+bool
+Volume::usesField(const SdfPath& fieldId) const
+{
+    return std::find(mFieldIds.begin(), mFieldIds.end(), fieldId) != mFieldIds.end();
+}
+
 void
 Volume::Sync(HdSceneDelegate* sceneDelegate,
              HdRenderParam*   renderParam,
@@ -114,6 +125,10 @@ OpenVdbAsset::Sync(HdSceneDelegate *sceneDelegate,
     hdmLogSyncStart("OpenVdbAsset", id, dirtyBits);
 
     if (*dirtyBits & DirtyParams) {
+        const std::string oldFilePath = mFilePath;
+        const TfToken oldName = mName;
+        const int oldIndex = mIndex;
+
         VtValue v;
         v = sceneDelegate->Get(id, HdFieldTokens->filePath);
         mFilePath = v.Get<SdfAssetPath>().GetResolvedPath();
@@ -121,6 +136,18 @@ OpenVdbAsset::Sync(HdSceneDelegate *sceneDelegate,
         mName = v.Get<TfToken>();
         v = sceneDelegate->GetLightParamValue(id, fieldIndexToken);
         mIndex = (not v.IsEmpty()) ? v.Get<int>() : -1;
+
+        // Nothing marks a volume dirty when only its field changes (Storm adds that
+        // dependency with a scene index of its own), and the volume's model is only
+        // rewritten when the volume syncs, so a time-sampled filePath would never advance.
+        if (mFilePath != oldFilePath || mName != oldName || mIndex != oldIndex) {
+            HdChangeTracker& tracker = sceneDelegate->GetRenderIndex().GetChangeTracker();
+            for (HdRprim* rprim : RenderDelegate::get(renderParam).volumes()) {
+                if (static_cast<const Volume*>(rprim)->usesField(id)) {
+                    tracker.MarkRprimDirty(rprim->GetId(), HdChangeTracker::DirtyVolumeField);
+                }
+            }
+        }
     }
     *dirtyBits = Clean;
     hdmLogSyncEnd(id);
