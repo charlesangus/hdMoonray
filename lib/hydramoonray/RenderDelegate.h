@@ -297,6 +297,7 @@ public:
     void setPruneProcedural(const std::string& rdlName, bool prune);
     bool getPruneVolume() const {return mPruneVolume;}
     void setPruneVolume(bool v);
+    const std::set<pxr::HdRprim*>& volumes() const { return mVolumes; }
     void setForcePolygon(bool v);
     void setIsHoudini(bool v) { mIsHoudini = v; }
     void setDisableRender(bool v) {mDisableRender = v;}

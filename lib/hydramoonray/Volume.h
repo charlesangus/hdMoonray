@@ -37,9 +37,14 @@ protected:
     bool isVolume() override { return true; }
     bool supportsUserData() override { return false; }
 
+public:
+    bool usesField(const pxr::SdfPath& fieldId) const;
+
 private:
     Volume(const Volume&)             = delete;
     Volume &operator =(const Volume&) = delete;
+
+    pxr::SdfPathVector mFieldIds;
 };
 
 /// USD field prim, these belong to the volumes
