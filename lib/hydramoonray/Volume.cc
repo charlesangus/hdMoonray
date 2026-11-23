@@ -131,13 +131,23 @@ OpenVdbAsset::Sync(HdSceneDelegate *sceneDelegate,
         const TfToken oldName = mName;
         const int oldIndex = mIndex;
 
+        // An unauthored attribute still yields a typed (default) value, so an empty or
+        // mistyped VtValue means the delegate has no data for the key; checked Gets on
+        // it raise coding errors, so the previous value is kept instead. fieldIndex is
+        // an attribute of the field like the others, not a light parameter.
         VtValue v;
         v = sceneDelegate->Get(id, HdFieldTokens->filePath);
-        mFilePath = v.Get<SdfAssetPath>().GetResolvedPath();
+        if (v.IsHolding<SdfAssetPath>()) {
+            mFilePath = v.UncheckedGet<SdfAssetPath>().GetResolvedPath();
+        }
         v = sceneDelegate->Get(id, fieldNameToken);
-        mName = v.Get<TfToken>();
-        v = sceneDelegate->GetLightParamValue(id, fieldIndexToken);
-        mIndex = (not v.IsEmpty()) ? v.Get<int>() : -1;
+        if (v.IsHolding<TfToken>()) {
+            mName = v.UncheckedGet<TfToken>();
+        } else if (v.IsHolding<std::string>()) {
+            mName = TfToken(v.UncheckedGet<std::string>());
+        }
+        v = sceneDelegate->Get(id, fieldIndexToken);
+        mIndex = v.IsHolding<int>() ? v.UncheckedGet<int>() : -1;
 
         // Nothing marks a volume dirty when only its field changes (Storm adds that
         // dependency with a scene index of its own), and the volume's model is only
