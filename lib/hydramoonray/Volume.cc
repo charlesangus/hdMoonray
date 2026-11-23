@@ -47,6 +47,7 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
                             const TfToken& reprToken)
 {
     static const TfToken densityToken("density");
+    static const TfToken emissionToken("emission");
     static const TfToken velocityToken("velocity");
     
     auto fields(sceneDelegate->GetVolumeFieldDescriptors(GetId()));
@@ -61,7 +62,8 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
                                             desc.fieldPrimType, desc.fieldId));
         if (!field) continue;
            
-        if (desc.fieldName == densityToken || 
+        if (desc.fieldName == densityToken ||
+            desc.fieldName == emissionToken ||
             desc.fieldName == velocityToken) {
                 
             const std::string attributeName = desc.fieldName.GetString() + "_grid";
