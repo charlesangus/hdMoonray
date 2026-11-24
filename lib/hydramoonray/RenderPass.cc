@@ -7,10 +7,12 @@
 #include "Camera.h"
 
 #include <pxr/imaging/hd/renderPassState.h>
+#include <pxr/base/gf/vec2f.h>
 #include <scene_rdl2/scene/rdl2/Utils.h>
 
 #include <iostream>
 #include <chrono>
+#include <optional>
 
 //#define DEBUG_MSG
 
@@ -63,16 +65,25 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
     const scene_rdl2::rdl2::SceneVariables& sv(sc.getSceneVariables());
 
     int w, h;
+    double aspectRatio;
+    float pixelAspectRatio = 1.0f;
 #if PXR_VERSION >= 2102
     if (renderPassState->GetFraming().IsValid()) {
-        const pxr::GfRect2i& dw(renderPassState->GetFraming().dataWindow);
+        const pxr::CameraUtilFraming& framing(renderPassState->GetFraming());
+        const pxr::GfRect2i& dw(framing.dataWindow);
         w = dw.GetWidth();
         h = dw.GetHeight();
+        // the filmback maps to the display window, which an overscanned or
+        // cropped data window does not match
+        const pxr::GfVec2f displaySize = framing.displayWindow.GetSize();
+        aspectRatio = displaySize[1] > 0.0f ? double(displaySize[0]) / displaySize[1] : double(w) / h;
+        if (framing.pixelAspectRatio > 0.0f) pixelAspectRatio = framing.pixelAspectRatio;
     } else // older clients may use viewport instead of framing
 #endif
     {   const pxr::GfVec4f& vp = renderPassState->GetViewport();
         w = vp[2];
         h = vp[3];
+        aspectRatio = double(w) / h;
     }
 
     const Camera* camera(dynamic_cast<const Camera*>(renderPassState->GetCamera()));
@@ -82,7 +93,8 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
         // usdview is not using this.
         return;
     }
-    const_cast<Camera*>(camera)->setAsPrimaryCamera(renderDelegate, double(w)/h);
+    const_cast<Camera*>(camera)->setAsPrimaryCamera(renderDelegate, aspectRatio, pixelAspectRatio,
+                                                    renderPassState->GetWindowPolicy());
 
     float frame = 0;
     scene_rdl2::rdl2::FloatVector motionSteps(2);
@@ -98,6 +110,25 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
     } else {
         motionSteps[0] = float(camera->GetShutterOpen());
         motionSteps[1] = float(camera->GetShutterClose());
+        const pxr::GfVec2f window = motionSteps[0] < motionSteps[1] ?
+            pxr::GfVec2f(motionSteps[0], motionSteps[1]) : pxr::GfVec2f(0.0f, 0.0f);
+        if (renderDelegate.resampleMotionIfWindowChanged(camera->GetId(), window)) {
+            // rprims sync again on the next execute, which must come before
+            // the render reports convergence
+            mDeferIsConverged = false;
+        }
+    }
+
+    // Velocities are per second and MoonRay scales them by fps; an explicit fps
+    // scene variable in the render settings wins over the stage's rate.
+    float fps = sv.get(sv.sFpsKey);
+    static const pxr::TfToken fpsSetting("moonray:sceneVariable:fps");
+    static const pxr::TfToken fpsSettingAlt("sceneVariable_fps");
+    if (renderDelegate.GetRenderSetting(fpsSetting).IsEmpty() &&
+        renderDelegate.GetRenderSetting(fpsSettingAlt).IsEmpty()) {
+        if (std::optional<double> tcps = renderDelegate.sceneTimeCodesPerSecond()) {
+            fps = float(*tcps);
+        }
     }
 
     const bool motionBlur = renderDelegate.getEnableMotionBlur() &&
@@ -105,6 +136,7 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
     if (not motionBlur) { motionSteps[0] = -1; motionSteps[1] = 0; }
 
     if (frame != sv.get(sv.sFrameKey) ||
+        fps != sv.get(sv.sFpsKey) ||
         motionSteps != sv.get(sv.sMotionSteps) ||
         motionBlur != sv.get(sv.sEnableMotionBlur) ||
         w != sv.get(sv.sImageWidth) ||
@@ -113,6 +145,7 @@ RenderPass::_Execute(const pxr::HdRenderPassStateSharedPtr& renderPassState,
         scene_rdl2::rdl2::SceneVariables& wsv(renderDelegate.acquireSceneContext().getSceneVariables());
         UpdateGuard guard(wsv);
         wsv.set(sv.sFrameKey, frame);
+        wsv.set(sv.sFpsKey, fps);
         wsv.set(sv.sMotionSteps, motionSteps);
         wsv.set(sv.sEnableMotionBlur, motionBlur);
         wsv.set(sv.sImageWidth, w);

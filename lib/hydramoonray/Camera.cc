@@ -146,11 +146,21 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
     const pxr::SdfPath& id = GetId();
     UpdateGuard guard(renderDelegate, mCamera);
 
-    // update the inverse view matrix (in RDL this is node_xform)
-    if (bits & CamDirtyView) {
+    // update the inverse view matrix (in RDL this is node_xform); a shutter
+    // change moves the interval it is sampled over
+    if (bits & (CamDirtyView | DirtyBits::DirtyParams)) {
         pxr::HdTimeSampleArray<pxr::GfMatrix4d, 4> sampledXforms;
-        sceneDelegate->SampleTransform(id, &sampledXforms);
-        
+        // Without a UsdImagingDelegate the scene delegate has no shutter interval
+        // of its own and samples only the current time.
+        const bool ownShutter = not renderDelegate.usdImagingDelegate() &&
+                                GetShutterOpen() < GetShutterClose();
+        if (ownShutter) {
+            sceneDelegate->SampleTransform(id, float(GetShutterOpen()), float(GetShutterClose()),
+                                           &sampledXforms);
+        } else {
+            sceneDelegate->SampleTransform(id, &sampledXforms);
+        }
+
         if (sampledXforms.count <= 1) {
             // if there's only one sample, it should match the cached value
 #if PXR_VERSION >= 2203
@@ -161,13 +171,17 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
 #endif
             mCamera->set(mCamera->sNodeXformKey, reinterpret_cast<const scene_rdl2::rdl2::Mat4d&>(xform));        
         } else {
-            // first and last samples will be sample interval boundaries
-            pxr::GfCamera cam(sampledXforms.values[0]);
+            // Samples bracket the shutter and may lie outside it, so the transform
+            // is interpolated at the shutter ends, which are the scene's motion steps.
+            const float open = ownShutter ? float(GetShutterOpen()) : sampledXforms.times[0];
+            const float close = ownShutter ? float(GetShutterClose())
+                                           : sampledXforms.times[sampledXforms.count - 1];
+            pxr::GfCamera cam(sampledXforms.Resample(open));
             pxr::GfFrustum frustum = cam.GetFrustum();
             pxr::GfMatrix4d viewInverse = frustum.ComputeViewMatrix().GetInverse();
             mCamera->set(mCamera->sNodeXformKey, reinterpret_cast<const scene_rdl2::rdl2::Mat4d&>(viewInverse));
 
-            cam.SetTransform(sampledXforms.values[sampledXforms.count-1]);
+            cam.SetTransform(sampledXforms.Resample(close));
             frustum = cam.GetFrustum();
             viewInverse = frustum.ComputeViewMatrix().GetInverse();
             mCamera->set(mCamera->sNodeXformKey,
@@ -231,14 +245,23 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
         // if necessary, we adjust this based on the requested image aspect ratio (mDesiredAspectRatio)
         // and the window policy. Note that the RDL camera only specifies apertureWidth, so
         // it's not clear that all conform options will work
+        //
+        // The image's shape on the filmback is the display window's aspect times the
+        // pixel aspect, and the render pass's window policy override takes
+        // precedence over the camera's.
         pxr::GfVec2d adjustedAperture(apertureWidth, apertureHeight);
         if (mDesiredAspectRatio != 0.0) {
-            adjustedAperture = pxr::CameraUtilConformedWindow(adjustedAperture, GetWindowPolicy(), mDesiredAspectRatio);
+            adjustedAperture = pxr::CameraUtilConformedWindow(adjustedAperture,
+                                                              mWindowPolicy.value_or(GetWindowPolicy()),
+                                                              mDesiredAspectRatio * mPixelAspectRatio);
         }
 
         // according to MOONRAY-4278, vertical offset needs to be adjusted
         double adjustedAr = adjustedAperture[0]/apertureHeight;
         vertOffset *= adjustedAr;
+        // MoonRay divides the vertical film offset by the pixel aspect ratio along
+        // with the vertical window, but the offset is already in filmback units.
+        vertOffset *= mPixelAspectRatio;
 
         mCamera->set("film_width_aperture", (float)adjustedAperture[0]);
         mCamera->setFocalLength(focalLength);
@@ -246,6 +269,7 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
         mCamera->set("vertical_film_offset", vertOffset);
         mCamera->setNear(mNear);
         mCamera->setFar(mFar);
+        mCamera->set("pixel_aspect_ratio", mPixelAspectRatio);
         mProjChanged = true;
     }
 
@@ -306,13 +330,17 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
 // scene camera identity interactively doesn't work (see HDM-95). This is now addressed, but there are
 // some open questions about performance and accuracy of these two approaches (see HDM-351)
 // 
-// aspectRatio is the shape of the image. The camera's window policy (GetWindowPolicy)
-// will be used to adjust the camera as needed to match.
+// aspectRatio and pixelAspectRatio give the shape of the image; windowPolicy is
+// used to adjust the camera as needed to match.
 void
-Camera::setAsPrimaryCamera(RenderDelegate& renderDelegate, double aspectRatio)
+Camera::setAsPrimaryCamera(RenderDelegate& renderDelegate, double aspectRatio, float pixelAspectRatio,
+                           pxr::CameraUtilConformWindowPolicy windowPolicy)
 {
-    if (aspectRatio != mDesiredAspectRatio) {
+    if (aspectRatio != mDesiredAspectRatio || pixelAspectRatio != mPixelAspectRatio ||
+        windowPolicy != mWindowPolicy) {
         mDesiredAspectRatio = aspectRatio;
+        mPixelAspectRatio = pixelAspectRatio;
+        mWindowPolicy = windowPolicy;
         if (mCamera) {
             // will adjusr camera to match mDesiredAspectRatio
             updateCamera(mSceneDelegate, renderDelegate, pxr::HdCamera::DirtyBits::DirtyParams);
