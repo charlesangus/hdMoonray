@@ -5,8 +5,12 @@
 
 #include "RenderSettings.h"
 
+#include <pxr/base/gf/vec2f.h>
 #include <pxr/imaging/hd/renderDelegate.h>
 #include <pxr/usdImaging/usdImaging/delegate.h>
+
+#include <mutex>
+#include <optional>
 
 namespace scene_rdl2 {namespace rdl2 {
 class Camera;
@@ -312,6 +316,21 @@ public:
     void setSceneDelegate(pxr::HdSceneDelegate*);
     pxr::UsdImagingDelegate* usdImagingDelegate() const { return mUsdImagingDelegate; }
 
+    // Frame-relative [open, close] interval that rprims sample transforms and
+    // primvars over: the shutter of the scene's primary camera, or of the camera
+    // last rendered through; [0, 0] for a closed shutter. Empty with a
+    // UsdImagingDelegate, whose own sampling interval applies.
+    std::optional<pxr::GfVec2f> motionSampleWindow();
+
+    // Called by the render pass with the interval its camera renders over. Returns
+    // true, after marking the sampled rprim data dirty, when rprims were sampled
+    // over a different interval and must sync again.
+    bool resampleMotionIfWindowChanged(const pxr::SdfPath& cameraId, const pxr::GfVec2f& window);
+
+    // Frames per second from the stage's time codes per second, used to scale
+    // per-second velocities; empty when the scene does not publish it.
+    std::optional<double> sceneTimeCodesPerSecond() const;
+
 private:
     RenderDelegate(const RenderDelegate &)             = delete;
     RenderDelegate &operator =(const RenderDelegate &) = delete;
@@ -378,6 +397,10 @@ private:
     void setDefaultLight(bool);
 
     pxr::UsdImagingDelegate* mUsdImagingDelegate = nullptr;
+
+    std::mutex mMotionWindowMutex;
+    pxr::SdfPath mMotionCameraId;
+    pxr::GfVec2f mSampledMotionWindow{0.0f, 0.0f};
 };
 
 // Same as scene_rdl2::rdl2:::SceneObject::UpdateGuard but also stops the renderer

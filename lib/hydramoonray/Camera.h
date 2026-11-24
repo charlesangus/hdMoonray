@@ -7,6 +7,7 @@
 namespace scene_rdl2 {namespace rdl2 { class Camera; } }
 
 #include <mutex>
+#include <optional>
 
 namespace hdMoonray {
 
@@ -36,7 +37,11 @@ public:
 
     std::pair<float, float> getTimeSamplingInterval() const;
 
-    void setAsPrimaryCamera(RenderDelegate&, double aspectRatio);
+    // aspectRatio is the display window's width over height and pixelAspectRatio
+    // a pixel's; windowPolicy, the render pass's override or else the camera's
+    // own, conforms the camera's aperture to the image.
+    void setAsPrimaryCamera(RenderDelegate&, double aspectRatio, float pixelAspectRatio,
+                            pxr::CameraUtilConformWindowPolicy windowPolicy);
     pxr::HdSceneDelegate* getSceneDelegate() const { return mSceneDelegate; }
 
 private:
@@ -50,6 +55,8 @@ private:
     // set to aspect ratio of image when camera is selected for rendering
     // the aperture ratio of the camera may be adjusted to match by updateCamera()
     double mDesiredAspectRatio = 0;  
+    float mPixelAspectRatio = 1.0f;
+    std::optional<pxr::CameraUtilConformWindowPolicy> mWindowPolicy;
     
     pxr::TfToken mClass; // moonray:class
     mutable bool mXformChanged = true;

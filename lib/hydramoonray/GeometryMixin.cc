@@ -82,6 +82,8 @@ GeometryMixin::syncAll(const std::string& className,
         // mGeometry must be non-null
         UpdateGuard guard(renderDelegate, mGeometry);
 
+        mSampleWindow = renderDelegate.motionSampleWindow();
+
         // primvars may override other means of setting attributes
         // we handle this by syncing primvars first...
         syncPrimvars(sceneDelegate, renderDelegate, dirtyBits);
@@ -119,21 +121,27 @@ GeometryMixin::syncAttributes(HdSceneDelegate* sceneDelegate,
     // cannot be overridden by a primvar
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id)) {
         HdTimeSampleArray<GfMatrix4d, 4> sampledXforms;
-        sceneDelegate->SampleTransform(id, &sampledXforms);
-        // if there's only one sample, it should match the cached value
-        if (sampledXforms.count <= 1) {
-            mGeometry->set(mGeometry->sNodeXformKey,
-                           reinterpret_cast<const Mat4d&>(sampledXforms.values[0]));
-            mMirror = sampledXforms.values[0].GetDeterminant() < 0; // workaround for MOONRAY-3512
+        if (mSampleWindow) {
+            sceneDelegate->SampleTransform(id, (*mSampleWindow)[0], (*mSampleWindow)[1], &sampledXforms);
         } else {
-            // first and last samples will be sample interval boundaries
-            mGeometry->set(mGeometry->sNodeXformKey,
-                           reinterpret_cast<const Mat4d&>(sampledXforms.values[0]));
-            mGeometry->set(mGeometry->sNodeXformKey,
-                           reinterpret_cast<const Mat4d&>(sampledXforms.values[sampledXforms.count-1]),
-                           TIMESTEP_END);
-            mMirror = sampledXforms.values[0].GetDeterminant() < 0; // workaround for MOONRAY-3512
-       }
+            sceneDelegate->SampleTransform(id, &sampledXforms);
+        }
+        GfMatrix4d begin = sampledXforms.values[0];
+        GfMatrix4d end = begin;
+        if (sampledXforms.count > 1) {
+            // Samples bracket the interval and may lie outside it, so the
+            // transform is interpolated at the interval ends, which are the
+            // scene's motion steps.
+            const GfVec2f window = mSampleWindow ? *mSampleWindow :
+                GfVec2f(sampledXforms.times[0], sampledXforms.times[sampledXforms.count - 1]);
+            begin = sampledXforms.Resample(window[0]);
+            end = sampledXforms.Resample(window[1]);
+        }
+        // the end sample is always written so a prim that stops moving does not
+        // keep a stale one
+        mGeometry->set(mGeometry->sNodeXformKey, reinterpret_cast<const Mat4d&>(begin));
+        mGeometry->set(mGeometry->sNodeXformKey, reinterpret_cast<const Mat4d&>(end), TIMESTEP_END);
+        mMirror = begin.GetDeterminant() < 0; // workaround for MOONRAY-3512
     }
 
     // side_type can be overridden by a primvar, so we have to check this hasn't happened

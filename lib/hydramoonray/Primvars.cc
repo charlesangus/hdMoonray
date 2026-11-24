@@ -376,26 +376,37 @@ GeometryMixin::setVec3fPrimvarMb(HdSceneDelegate* sceneDelegate,
         }
    
         HdTimeSampleArray<VtValue, 4> vals;
-        sceneDelegate->SamplePrimvar(rprim.GetId(), hydraName, &vals);
+        if (mSampleWindow) {
+            sceneDelegate->SamplePrimvar(rprim.GetId(), hydraName,
+                                         (*mSampleWindow)[0], (*mSampleWindow)[1], &vals);
+        } else {
+            sceneDelegate->SamplePrimvar(rprim.GetId(), hydraName, &vals);
+        }
 
-        if (vals.count <= 1) {
+        bool sizesMatch = vals.count > 1;
+        for (size_t i = 0; sizesMatch && i < vals.count; ++i) {
+            sizesMatch = vals.values[i].IsHolding<VtVec3fArray>() &&
+                         vals.values[i].GetArraySize() == vals.values[0].GetArraySize();
+        }
+
+        if (not sizesMatch) {
+            // A single sample, or topology changing over the interval: the
+            // current-time value is used unblurred.
             setVec3fPrimvar(mGeometry, rdlName_0, value);
             mGeometry->resetToDefault(rdlName_1);
         } else {
-            const bool sizesMatch =
-                vals.values[0].Get<pxr::VtVec3fArray>().size() ==
-                vals.values[vals.count - 1].Get<pxr::VtVec3fArray>().size();
-
-            if (sizesMatch) {
-                setVec3fPrimvar(mGeometry, rdlName_0, vals.values[0]);
-                setVec3fPrimvar(mGeometry, rdlName_1, vals.values[vals.count - 1]);
-                                 
+            // Samples bracket the interval and may lie outside it, so the
+            // values are interpolated at the interval ends, which are the
+            // scene's motion steps.
+            const GfVec2f window = mSampleWindow ? *mSampleWindow :
+                GfVec2f(vals.times[0], vals.times[vals.count - 1]);
+            setVec3fPrimvar(mGeometry, rdlName_0, vals.Resample(window[0]));
+            if (window[0] < window[1]) {
+                setVec3fPrimvar(mGeometry, rdlName_1, vals.Resample(window[1]));
             } else {
-                // If the sizes of the arrays don't match, then the topology
-                // is changing and we should just use the second set of values
-                setVec3fPrimvar(mGeometry, rdlName_0, vals.values[vals.count - 1]);
+                mGeometry->resetToDefault(rdlName_1);
             }
-        }          
+        }
     } catch (std::exception& e) {
         // may be called in cases that rdlName_0 or _1 don't exist : e.g.
         // if Hydra generates a "points" primvar for procedurals that don't

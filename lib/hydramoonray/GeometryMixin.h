@@ -5,6 +5,9 @@
 
 #include <pxr/imaging/hd/rprim.h>
 #include <pxr/base/gf/matrix4f.h>
+#include <pxr/base/gf/vec2f.h>
+
+#include <optional>
 
 namespace scene_rdl2 {namespace rdl2 {
     class Geometry;
@@ -145,6 +148,10 @@ private:
 
     // All UserData objects associated with this geometry 
     std::map<pxr::TfToken, scene_rdl2::rdl2::UserData*> mUserData;
+
+    // interval transforms and primvars are sampled over at this sync; empty when
+    // the scene delegate's own shutter interval applies
+    std::optional<pxr::GfVec2f> mSampleWindow;
 
     bool mMirror = false; // true if xform is a reflection
     bool mUserDataChanged = false;

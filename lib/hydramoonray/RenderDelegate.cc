@@ -20,6 +20,7 @@
 #include <pxr/imaging/hd/extComputation.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/tf/errorMark.h>
+#include <pxr/imaging/hd/sceneGlobalsSchema.h>
 #include <pxr/usdImaging/usdImaging/delegate.h>
 
 #include <scene_rdl2/common/except/exceptions.h>
@@ -806,6 +807,69 @@ void RenderDelegate::markAllRprimsDirty(pxr::HdDirtyBits bits)
         mRenderIndex->GetChangeTracker().MarkAllRprimsDirty(bits);
         mark.Clear();
     }
+}
+
+std::optional<pxr::GfVec2f>
+RenderDelegate::motionSampleWindow()
+{
+    if (mUsdImagingDelegate) return std::nullopt;
+
+    // The interval does not depend on whether motion blur is on: with it off the
+    // renderer reads only the first sample, and toggling it needs no resync.
+    pxr::GfVec2f window(0.0f, 0.0f);
+    std::lock_guard<std::mutex> lock(mMotionWindowMutex);
+    if (mRenderIndex) {
+        // Until a render pass names its camera, the scene's primary camera stands
+        // in for it; sprims sync before rprims, so its shutter is already current.
+        pxr::SdfPath cameraId = mMotionCameraId;
+        if (cameraId.IsEmpty()) {
+            pxr::HdSceneGlobalsSchema globals =
+                pxr::HdSceneGlobalsSchema::GetFromSceneIndex(mRenderIndex->GetTerminalSceneIndex());
+            if (pxr::HdPathDataSourceHandle ds = globals.GetPrimaryCameraPrim()) {
+                cameraId = ds->GetTypedValue(0.0f);
+            }
+        }
+        if (not cameraId.IsEmpty()) {
+            const pxr::HdCamera* camera = dynamic_cast<const pxr::HdCamera*>(
+                mRenderIndex->GetSprim(pxr::HdPrimTypeTokens->camera, cameraId));
+            if (camera && camera->GetShutterOpen() < camera->GetShutterClose()) {
+                window = pxr::GfVec2f(float(camera->GetShutterOpen()), float(camera->GetShutterClose()));
+            }
+        }
+    }
+    mSampledMotionWindow = window;
+    return window;
+}
+
+bool
+RenderDelegate::resampleMotionIfWindowChanged(const pxr::SdfPath& cameraId, const pxr::GfVec2f& window)
+{
+    if (mUsdImagingDelegate) return false;
+    {
+        std::lock_guard<std::mutex> lock(mMotionWindowMutex);
+        mMotionCameraId = cameraId;
+        if (window == mSampledMotionWindow) return false;
+        mSampledMotionWindow = window;
+    }
+    markAllRprimsDirty(pxr::HdChangeTracker::DirtyTransform |
+                       pxr::HdChangeTracker::DirtyPoints |
+                       pxr::HdChangeTracker::DirtyNormals |
+                       pxr::HdChangeTracker::DirtyWidths |
+                       pxr::HdChangeTracker::DirtyPrimvar);
+    return true;
+}
+
+std::optional<double>
+RenderDelegate::sceneTimeCodesPerSecond() const
+{
+    if (not mRenderIndex) return std::nullopt;
+    pxr::HdSceneGlobalsSchema globals =
+        pxr::HdSceneGlobalsSchema::GetFromSceneIndex(mRenderIndex->GetTerminalSceneIndex());
+    if (pxr::HdDoubleDataSourceHandle ds = globals.GetTimeCodesPerSecond()) {
+        const double tcps = ds->GetTypedValue(0.0f);
+        if (tcps > 0.0) return tcps;
+    }
+    return std::nullopt;
 }
 
 }
