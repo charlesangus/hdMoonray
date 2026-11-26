@@ -38,6 +38,7 @@ public:
 
     float getProgress() const override;
     float getElapsedSeconds() const override;
+    std::string getStatusString() const override;
     bool isFrameComplete() const override;
 
     bool allocate(scene_rdl2::rdl2::RenderOutput*, PixelData&, const PixelSize&) override;
@@ -63,6 +64,7 @@ private:
     void statusHandler(const std::string& msg);
 
     void updateStatusString(mcrt_dataio::ClientReceiverFb::BackendStat stat, float renderPrepProgress);
+    void setStatusString(const std::string& status);
     
     std::unique_ptr<arras4::sdk::SDK> mSDK;
     std::shared_ptr<mcrt_dataio::ClientReceiverFb> mFbReceiver;
@@ -82,6 +84,10 @@ private:
     std::atomic<bool> mConnected{false};
 
     std::mutex mMutex;
+
+    // guards mStatusString alone: the arras threads set it, some under mMutex, while
+    // RenderDelegate reads it; connect() can hold mMutex for a whole connect timeout
+    mutable std::mutex mStatusMutex;
 
     // render progress value from the last received image.
     // -1 if no images have been received at all

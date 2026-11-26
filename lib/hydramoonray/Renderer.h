@@ -49,8 +49,8 @@ public:
     virtual float getProgress() const=0;
     /// Time since progress==0
     virtual float getElapsedSeconds() const=0;
-    /// Current status summary
-    virtual const std::string& getStatusString() const { return mStatusString; };
+    /// Current status summary, a copy: a renderer may set it on another thread
+    virtual std::string getStatusString() const { return mStatusString; }
 
     /// True when converged
     virtual bool isFrameComplete() const=0;

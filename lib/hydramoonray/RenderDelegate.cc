@@ -230,7 +230,7 @@ RenderDelegate::GetRenderStats() const
         static const pxr::TfToken totalClockTime("totalClockTime");
         stats[totalClockTime] = mRenderer->getElapsedSeconds();
         static const pxr::TfToken rpAnn("renderProgressAnnotation");
-        const std::string& status = mRenderer->getStatusString();
+        const std::string status = mRenderer->getStatusString();
         if (!status.empty()) {
             stats[rpAnn] = status;
         }

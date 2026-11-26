@@ -150,7 +150,7 @@ ArrasRenderer::connect(bool resetFailureCount)
     mConnected = true;
     hdmLogArras("endConnect");
     Logger::info("Moonray delegate created an Arras session with ID ",sessionId);
-    mStatusString = "Connected";
+    setStatusString("Connected");
     return true;
 }
 
@@ -224,7 +224,7 @@ ArrasRenderer::updateStatusString(mcrt_dataio::ClientReceiverFb::BackendStat sta
     if (mFrameComplete) {
         // NB doesn't actually seem to show up in Houdini : I think the app
         // stops checking for stats too quickly after completion...
-        mStatusString = "Complete"; return;
+        setStatusString("Complete"); return;
     }
 
     switch(stat) {
@@ -233,17 +233,17 @@ ArrasRenderer::updateStatusString(mcrt_dataio::ClientReceiverFb::BackendStat sta
         case mcrt_dataio::ClientReceiverFb::BackendStat::RENDER_PREP_RUN: 
         {
             int percent = (int)(renderPrepProgress*100);
-            mStatusString = "Render Prep " + std::to_string(percent) + "%";
+            setStatusString("Render Prep " + std::to_string(percent) + "%");
             break;
         }
         case mcrt_dataio::ClientReceiverFb::BackendStat::RENDER_PREP_CANCEL:
-            mStatusString = "Canceling Prep";
+            setStatusString("Canceling Prep");
             break;
         case mcrt_dataio::ClientReceiverFb::BackendStat::MCRT:
-            mStatusString = "Shading";
+            setStatusString("Shading");
             break;
         default:
-            mStatusString = "";
+            setStatusString("");
     }
 }
 
@@ -286,7 +286,7 @@ ArrasRenderer::statusHandler(const std::string& msg)
                 Logger::error("Arras session stopped, ",
                               (stopReason.isString() ? stopReason.asString() : msg));
                 mConnected = false;
-                mStatusString = "Disconnected";
+                setStatusString("Disconnected");
                 return;
             }
         }
@@ -354,6 +354,20 @@ ArrasRenderer::getElapsedSeconds() const
     return mElapsedSeconds;
 }
 
+std::string
+ArrasRenderer::getStatusString() const
+{
+    std::lock_guard<std::mutex> guard(mStatusMutex);
+    return mStatusString;
+}
+
+void
+ArrasRenderer::setStatusString(const std::string& status)
+{
+    std::lock_guard<std::mutex> guard(mStatusMutex);
+    mStatusString = status;
+}
+
 // warning: multithreaded: Almost all the methods appear to be done by the same thread,
 // however beginUpdate() may be done by a different thread. A mutex must be used
 // around any parts where a simultaneous beginUpdate() would be bad.
@@ -377,7 +391,7 @@ ArrasRenderer::endUpdate()
         }
 
         if (!mConnected || !mSDK->isEngineReady()) {
-            if (mConnected) mStatusString = "Waiting for engine";
+            if (mConnected) setStatusString("Waiting for engine");
             return;
         }
 
