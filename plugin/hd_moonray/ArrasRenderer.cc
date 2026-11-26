@@ -376,7 +376,10 @@ ArrasRenderer::endUpdate()
             mSettings.clearReconnectRequired();
         }
 
-        if (!mConnected || !mSDK->isEngineReady()) return;
+        if (!mConnected || !mSDK->isEngineReady()) {
+            if (mConnected) mStatusString = "Waiting for engine";
+            return;
+        }
 
         hdmLogArras("sendUpdate");
         Logger::info("Restarting Arras render");
