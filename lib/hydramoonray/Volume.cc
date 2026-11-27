@@ -6,6 +6,7 @@
 #include "HdmLog.h"
 #include "pxr/usd/sdf/types.h" // for SdfAssetPath
 #include <scene_rdl2/scene/rdl2/Geometry.h>
+#include <algorithm>
 #include <iostream>
 
 using namespace pxr;
@@ -46,9 +47,14 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
                             const TfToken& reprToken)
 {
     static const TfToken densityToken("density");
+    static const TfToken emissionToken("emission");
     static const TfToken velocityToken("velocity");
     
     auto fields(sceneDelegate->GetVolumeFieldDescriptors(GetId()));
+    mFieldIds.clear();
+    for (auto& desc: fields) {
+        mFieldIds.push_back(desc.fieldId);
+    }
     const std::string* filePath = nullptr;
     for (auto& desc: fields) {
         const OpenVdbAsset* const field =
@@ -56,7 +62,8 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
                                             desc.fieldPrimType, desc.fieldId));
         if (!field) continue;
            
-        if (desc.fieldName == densityToken || 
+        if (desc.fieldName == densityToken ||
+            desc.fieldName == emissionToken ||
             desc.fieldName == velocityToken) {
                 
             const std::string attributeName = desc.fieldName.GetString() + "_grid";
@@ -83,6 +90,12 @@ Volume::syncAttributes(HdSceneDelegate* sceneDelegate,
     // base class handles transform and double-sided
     GeometryMixin::syncAttributes(sceneDelegate, renderDelegate, dirtyBits, reprToken);
    
+}
+
+bool
+Volume::usesField(const SdfPath& fieldId) const
+{
+    return std::find(mFieldIds.begin(), mFieldIds.end(), fieldId) != mFieldIds.end();
 }
 
 void
@@ -114,13 +127,39 @@ OpenVdbAsset::Sync(HdSceneDelegate *sceneDelegate,
     hdmLogSyncStart("OpenVdbAsset", id, dirtyBits);
 
     if (*dirtyBits & DirtyParams) {
+        const std::string oldFilePath = mFilePath;
+        const TfToken oldName = mName;
+        const int oldIndex = mIndex;
+
+        // An unauthored attribute still yields a typed (default) value, so an empty or
+        // mistyped VtValue means the delegate has no data for the key; checked Gets on
+        // it raise coding errors, so the previous value is kept instead. fieldIndex is
+        // an attribute of the field like the others, not a light parameter.
         VtValue v;
         v = sceneDelegate->Get(id, HdFieldTokens->filePath);
-        mFilePath = v.Get<SdfAssetPath>().GetResolvedPath();
+        if (v.IsHolding<SdfAssetPath>()) {
+            mFilePath = v.UncheckedGet<SdfAssetPath>().GetResolvedPath();
+        }
         v = sceneDelegate->Get(id, fieldNameToken);
-        mName = v.Get<TfToken>();
-        v = sceneDelegate->GetLightParamValue(id, fieldIndexToken);
-        mIndex = (not v.IsEmpty()) ? v.Get<int>() : -1;
+        if (v.IsHolding<TfToken>()) {
+            mName = v.UncheckedGet<TfToken>();
+        } else if (v.IsHolding<std::string>()) {
+            mName = TfToken(v.UncheckedGet<std::string>());
+        }
+        v = sceneDelegate->Get(id, fieldIndexToken);
+        mIndex = v.IsHolding<int>() ? v.UncheckedGet<int>() : -1;
+
+        // Nothing marks a volume dirty when only its field changes (Storm adds that
+        // dependency with a scene index of its own), and the volume's model is only
+        // rewritten when the volume syncs, so a time-sampled filePath would never advance.
+        if (mFilePath != oldFilePath || mName != oldName || mIndex != oldIndex) {
+            HdChangeTracker& tracker = sceneDelegate->GetRenderIndex().GetChangeTracker();
+            for (HdRprim* rprim : RenderDelegate::get(renderParam).volumes()) {
+                if (static_cast<const Volume*>(rprim)->usesField(id)) {
+                    tracker.MarkRprimDirty(rprim->GetId(), HdChangeTracker::DirtyVolumeField);
+                }
+            }
+        }
     }
     *dirtyBits = Clean;
     hdmLogSyncEnd(id);
