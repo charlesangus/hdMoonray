@@ -49,6 +49,7 @@ RenderPass::_MarkCollectionDirty()
 void
 RenderPass::_Sync()
 {
+    renderDelegate.syncMotionWindow();
 }
 
 void

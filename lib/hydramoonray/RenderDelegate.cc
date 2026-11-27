@@ -810,53 +810,71 @@ void RenderDelegate::markAllRprimsDirty(pxr::HdDirtyBits bits)
 }
 
 std::optional<pxr::GfVec2f>
-RenderDelegate::motionSampleWindow()
+RenderDelegate::motionSampleWindow() const
 {
     if (mUsdImagingDelegate) return std::nullopt;
+    return mMotionWindow;
+}
 
+pxr::GfVec2f
+RenderDelegate::shutterWindow(const pxr::SdfPath& cameraId) const
+{
     // The interval does not depend on whether motion blur is on: with it off the
     // renderer reads only the first sample, and toggling it needs no resync.
-    pxr::GfVec2f window(0.0f, 0.0f);
-    std::lock_guard<std::mutex> lock(mMotionWindowMutex);
-    if (mRenderIndex) {
-        // Until a render pass names its camera, the scene's primary camera stands
-        // in for it; sprims sync before rprims, so its shutter is already current.
-        pxr::SdfPath cameraId = mMotionCameraId;
-        if (cameraId.IsEmpty()) {
-            pxr::HdSceneGlobalsSchema globals =
-                pxr::HdSceneGlobalsSchema::GetFromSceneIndex(mRenderIndex->GetTerminalSceneIndex());
-            if (pxr::HdPathDataSourceHandle ds = globals.GetPrimaryCameraPrim()) {
-                cameraId = ds->GetTypedValue(0.0f);
-            }
-        }
-        if (not cameraId.IsEmpty()) {
-            const pxr::HdCamera* camera = dynamic_cast<const pxr::HdCamera*>(
-                mRenderIndex->GetSprim(pxr::HdPrimTypeTokens->camera, cameraId));
-            if (camera && camera->GetShutterOpen() < camera->GetShutterClose()) {
-                window = pxr::GfVec2f(float(camera->GetShutterOpen()), float(camera->GetShutterClose()));
-            }
+    if (mRenderIndex && not cameraId.IsEmpty()) {
+        const pxr::HdCamera* camera = dynamic_cast<const pxr::HdCamera*>(
+            mRenderIndex->GetSprim(pxr::HdPrimTypeTokens->camera, cameraId));
+        if (camera && camera->GetShutterOpen() < camera->GetShutterClose()) {
+            return pxr::GfVec2f(float(camera->GetShutterOpen()), float(camera->GetShutterClose()));
         }
     }
-    mSampledMotionWindow = window;
-    return window;
+    return pxr::GfVec2f(0.0f, 0.0f);
 }
 
 bool
-RenderDelegate::resampleMotionIfWindowChanged(const pxr::SdfPath& cameraId, const pxr::GfVec2f& window)
+RenderDelegate::setMotionWindow(const pxr::GfVec2f& window)
 {
-    if (mUsdImagingDelegate) return false;
-    {
-        std::lock_guard<std::mutex> lock(mMotionWindowMutex);
-        mMotionCameraId = cameraId;
-        if (window == mSampledMotionWindow) return false;
-        mSampledMotionWindow = window;
-    }
+    if (window == mMotionWindow) return false;
+    mMotionWindow = window;
     markAllRprimsDirty(pxr::HdChangeTracker::DirtyTransform |
                        pxr::HdChangeTracker::DirtyPoints |
                        pxr::HdChangeTracker::DirtyNormals |
                        pxr::HdChangeTracker::DirtyWidths |
                        pxr::HdChangeTracker::DirtyPrimvar);
     return true;
+}
+
+void
+RenderDelegate::syncMotionWindow()
+{
+    if (mUsdImagingDelegate || not mRenderIndex) return;
+
+    pxr::SdfPath primaryCameraId;
+    pxr::HdSceneGlobalsSchema globals =
+        pxr::HdSceneGlobalsSchema::GetFromSceneIndex(mRenderIndex->GetTerminalSceneIndex());
+    if (pxr::HdPathDataSourceHandle ds = globals.GetPrimaryCameraPrim()) {
+        primaryCameraId = ds->GetTypedValue(0.0f);
+    }
+    // A client that renders through a camera other than the one it publishes
+    // would make the two windows alternate and resync every frame, so after a
+    // mismatch the camera last rendered through is followed until the published
+    // camera changes.
+    if (primaryCameraId != mPrimaryCameraId) {
+        mPrimaryCameraId = primaryCameraId;
+        mFollowPrimaryCamera = true;
+    }
+    const pxr::SdfPath& cameraId =
+        mFollowPrimaryCamera && not primaryCameraId.IsEmpty() ? primaryCameraId : mMotionCameraId;
+    setMotionWindow(shutterWindow(cameraId));
+}
+
+bool
+RenderDelegate::resampleMotionIfWindowChanged(const pxr::SdfPath& cameraId, const pxr::GfVec2f& window)
+{
+    if (mUsdImagingDelegate) return false;
+    mMotionCameraId = cameraId;
+    if (cameraId != mPrimaryCameraId) mFollowPrimaryCamera = false;
+    return setMotionWindow(window);
 }
 
 std::optional<double>

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <set>
 #include "GeometryMixin.h"
 #include <pxr/imaging/hd/mesh.h>
 
@@ -54,8 +55,10 @@ private:
     void syncCryptomatteUserData(RenderDelegate& renderDelegate);
     // Returns true when the set of dropped faces changed.
     bool updateHoles(const pxr::HdMeshTopology& topology);
-    bool dropHoleEntries(const pxr::VtValue& value, const pxr::HdInterpolation& interp,
-                         pxr::VtValue& out) const;
+    // Returns true when out replaces value: the primvar without its hole
+    // entries, or empty when it cannot be remapped.
+    bool dropHoleEntries(const pxr::TfToken& name, const pxr::VtValue& value,
+                         const pxr::HdInterpolation& interp, pxr::VtValue& out);
 
     // MoonRay meshes have no hole attribute, so hole faces are removed from the
     // topology and from every per-face and per-face-vertex primvar.
@@ -63,6 +66,7 @@ private:
     std::vector<int> mFaceRemap;      // old face -> new face, -1 for a hole
     std::vector<int> mKeptFaces;      // old index of each surviving face
     std::vector<int> mKeptCorners;    // old face-vertex index of each surviving corner
+    std::set<pxr::TfToken> mHoleRemapWarned;
 };
 
 }

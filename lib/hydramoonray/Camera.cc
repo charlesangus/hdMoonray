@@ -150,13 +150,15 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
     // change moves the interval it is sampled over
     if (bits & (CamDirtyView | DirtyBits::DirtyParams)) {
         pxr::HdTimeSampleArray<pxr::GfMatrix4d, 4> sampledXforms;
-        // Without a UsdImagingDelegate the scene delegate has no shutter interval
-        // of its own and samples only the current time.
-        const bool ownShutter = not renderDelegate.usdImagingDelegate() &&
-                                GetShutterOpen() < GetShutterClose();
-        if (ownShutter) {
-            sceneDelegate->SampleTransform(id, float(GetShutterOpen()), float(GetShutterClose()),
-                                           &sampledXforms);
+        // Without a UsdImagingDelegate the scene delegate's default interval is
+        // not the shutter, so the camera always samples an explicit window: its
+        // own shutter, or the frame alone when the shutter is closed.
+        const bool explicitWindow = not renderDelegate.usdImagingDelegate();
+        const bool ownShutter = explicitWindow && GetShutterOpen() < GetShutterClose();
+        const float windowOpen = ownShutter ? float(GetShutterOpen()) : 0.0f;
+        const float windowClose = ownShutter ? float(GetShutterClose()) : 0.0f;
+        if (explicitWindow) {
+            sceneDelegate->SampleTransform(id, windowOpen, windowClose, &sampledXforms);
         } else {
             sceneDelegate->SampleTransform(id, &sampledXforms);
         }
@@ -176,9 +178,9 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
         } else {
             // Samples bracket the shutter and may lie outside it, so the transform
             // is interpolated at the shutter ends, which are the scene's motion steps.
-            const float open = ownShutter ? float(GetShutterOpen()) : sampledXforms.times[0];
-            const float close = ownShutter ? float(GetShutterClose())
-                                           : sampledXforms.times[sampledXforms.count - 1];
+            const float open = explicitWindow ? windowOpen : sampledXforms.times[0];
+            const float close = explicitWindow ? windowClose
+                                               : sampledXforms.times[sampledXforms.count - 1];
             pxr::GfCamera cam(sampledXforms.Resample(open));
             pxr::GfFrustum frustum = cam.GetFrustum();
             pxr::GfMatrix4d viewInverse = frustum.ComputeViewMatrix().GetInverse();

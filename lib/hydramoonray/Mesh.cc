@@ -23,7 +23,11 @@
 #include <pxr/base/gf/vec4d.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec4f.h>
+#include <pxr/base/tf/preprocessorUtilsLite.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/base/vt/typeHeaders.h>
+#include <pxr/base/vt/types.h>
+#include <set>
 #include <vector>
 #include <pxr/imaging/hd/meshUtil.h>
 #include <pxr/imaging/pxOsd/tokens.h>
@@ -147,19 +151,28 @@ Mesh::geometryForMeshLight(RenderDelegate& renderDelegate)
 
 namespace {
 
+enum class Gather { NotThisType, Gathered, TooShort };
+
 template <typename T>
-bool gatherArray(const VtValue& value, const std::vector<int>& indices, VtValue& out)
+Gather gatherArray(const VtValue& value, const std::vector<int>& indices, VtValue& out)
 {
-    if (!value.IsHolding<VtArray<T>>()) return false;
+    if (!value.IsHolding<VtArray<T>>()) return Gather::NotThisType;
     const VtArray<T>& in = value.UncheckedGet<VtArray<T>>();
+    if (!indices.empty() && size_t(indices.back()) >= in.size()) return Gather::TooShort;
     VtArray<T> result(indices.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-        // a short array is left to the consumer's own size checks
-        if (size_t(indices[i]) >= in.size()) return false;
-        result[i] = in[indices[i]];
-    }
+    for (size_t i = 0; i < indices.size(); ++i) result[i] = in[indices[i]];
     out = VtValue(std::move(result));
-    return true;
+    return Gather::Gathered;
+}
+
+Gather gatherAnyArray(const VtValue& value, const std::vector<int>& indices, VtValue& out)
+{
+    Gather result = Gather::NotThisType;
+#define HDM_GATHER_ARRAY(unused, elem) \
+    if (result == Gather::NotThisType) result = gatherArray<VT_TYPE(elem)>(value, indices, out);
+    TF_PP_SEQ_FOR_EACH(HDM_GATHER_ARRAY, ~, VT_SCALAR_VALUE_TYPES)
+#undef HDM_GATHER_ARRAY
+    return result;
 }
 
 }
@@ -189,7 +202,8 @@ Mesh::updateHoles(const HdMeshTopology& topology)
             corner += counts[f];
         }
     }
-    const bool changed = hasHoles != mHasHoles || keptFaces != mKeptFaces;
+    const bool changed = hasHoles != mHasHoles || keptFaces != mKeptFaces ||
+                         keptCorners != mKeptCorners;
     mHasHoles = hasHoles;
     mFaceRemap = std::move(faceRemap);
     mKeptFaces = std::move(keptFaces);
@@ -198,7 +212,8 @@ Mesh::updateHoles(const HdMeshTopology& topology)
 }
 
 bool
-Mesh::dropHoleEntries(const VtValue& value, const HdInterpolation& interp, VtValue& out) const
+Mesh::dropHoleEntries(const TfToken& name, const VtValue& value, const HdInterpolation& interp,
+                      VtValue& out)
 {
     if (!mHasHoles || value.IsEmpty()) return false;
     const std::vector<int>* indices = nullptr;
@@ -206,19 +221,23 @@ Mesh::dropHoleEntries(const VtValue& value, const HdInterpolation& interp, VtVal
     else if (interp == HdInterpolationFaceVarying) indices = &mKeptCorners;
     else return false;
 
-    return gatherArray<float>(value, *indices, out) ||
-           gatherArray<double>(value, *indices, out) ||
-           gatherArray<int>(value, *indices, out) ||
-           gatherArray<unsigned int>(value, *indices, out) ||
-           gatherArray<bool>(value, *indices, out) ||
-           gatherArray<GfVec2f>(value, *indices, out) ||
-           gatherArray<GfVec3f>(value, *indices, out) ||
-           gatherArray<GfVec4f>(value, *indices, out) ||
-           gatherArray<GfVec2d>(value, *indices, out) ||
-           gatherArray<GfVec3d>(value, *indices, out) ||
-           gatherArray<GfVec4d>(value, *indices, out) ||
-           gatherArray<std::string>(value, *indices, out) ||
-           gatherArray<TfToken>(value, *indices, out);
+    const Gather result = gatherAnyArray(value, *indices, out);
+    if (result == Gather::Gathered) return true;
+
+    // Values left in the old face order would be assigned to the wrong faces,
+    // so a primvar that cannot be remapped is dropped instead.
+    if (mHoleRemapWarned.insert(name).second) {
+        if (result == Gather::TooShort) {
+            Logger::warn(GetId(), ": primvar ", name, " has fewer values than the mesh has ",
+                         interp == HdInterpolationUniform ? "faces" : "face vertices",
+                         " and is ignored");
+        } else {
+            Logger::warn(GetId(), ": primvar ", name, " of type ", value.GetTypeName(),
+                         " cannot drop the mesh's hole faces and is ignored");
+        }
+    }
+    out = VtValue();
+    return true;
 }
 
 void
@@ -414,7 +433,7 @@ Mesh::primvarChanged(HdSceneDelegate *sceneDelegate, RenderDelegate& renderDeleg
     static const TfToken normalToken("normal");
 
     VtValue filtered;
-    const VtValue& value = dropHoleEntries(rawValue, interp, filtered) ? filtered : rawValue;
+    const VtValue& value = dropHoleEntries(name, rawValue, interp, filtered) ? filtered : rawValue;
 
     if (name == HdTokens->normals || name == normalToken) {
         if (value.IsEmpty()) {

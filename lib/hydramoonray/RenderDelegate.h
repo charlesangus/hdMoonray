@@ -317,10 +317,16 @@ public:
     pxr::UsdImagingDelegate* usdImagingDelegate() const { return mUsdImagingDelegate; }
 
     // Frame-relative [open, close] interval that rprims sample transforms and
-    // primvars over: the shutter of the scene's primary camera, or of the camera
-    // last rendered through; [0, 0] for a closed shutter. Empty with a
-    // UsdImagingDelegate, whose own sampling interval applies.
-    std::optional<pxr::GfVec2f> motionSampleWindow();
+    // primvars over; [0, 0] for a closed shutter. Empty with a
+    // UsdImagingDelegate, whose own sampling interval applies. Only the render
+    // pass changes it, never while rprims sync, so rprims read it unlocked.
+    std::optional<pxr::GfVec2f> motionSampleWindow() const;
+
+    // Called by the render pass's sync, after sprims and before rprims: takes
+    // the window from the scene's primary camera, or from the camera last
+    // rendered through when there is none, and marks the sampled rprim data
+    // dirty when it changed so rprims sync once over the new window.
+    void syncMotionWindow();
 
     // Called by the render pass with the interval its camera renders over. Returns
     // true, after marking the sampled rprim data dirty, when rprims were sampled
@@ -398,9 +404,13 @@ private:
 
     pxr::UsdImagingDelegate* mUsdImagingDelegate = nullptr;
 
-    std::mutex mMotionWindowMutex;
+    pxr::GfVec2f shutterWindow(const pxr::SdfPath& cameraId) const;
+    bool setMotionWindow(const pxr::GfVec2f& window);
+
     pxr::SdfPath mMotionCameraId;
-    pxr::GfVec2f mSampledMotionWindow{0.0f, 0.0f};
+    pxr::SdfPath mPrimaryCameraId;
+    bool mFollowPrimaryCamera = true;
+    pxr::GfVec2f mMotionWindow{0.0f, 0.0f};
 };
 
 // Same as scene_rdl2::rdl2:::SceneObject::UpdateGuard but also stops the renderer
