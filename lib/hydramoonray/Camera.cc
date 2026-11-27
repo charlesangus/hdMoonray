@@ -169,7 +169,10 @@ Camera::updateCamera(pxr::HdSceneDelegate* sceneDelegate, RenderDelegate& render
 #else
             const pxr::GfMatrix4d xform(GetViewInverseMatrix());
 #endif
-            mCamera->set(mCamera->sNodeXformKey, reinterpret_cast<const scene_rdl2::rdl2::Mat4d&>(xform));        
+            mCamera->set(mCamera->sNodeXformKey, reinterpret_cast<const scene_rdl2::rdl2::Mat4d&>(xform));
+            // a camera that stops moving must not keep a stale end sample
+            mCamera->set(mCamera->sNodeXformKey, reinterpret_cast<const scene_rdl2::rdl2::Mat4d&>(xform),
+                         scene_rdl2::rdl2::TIMESTEP_END);
         } else {
             // Samples bracket the shutter and may lie outside it, so the transform
             // is interpolated at the shutter ends, which are the scene's motion steps.
