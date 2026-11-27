@@ -52,6 +52,17 @@ private:
                         const pxr::TfToken& reprToken);
     void syncSubdivTags(const pxr::PxOsdSubdivTags& tags);
     void syncCryptomatteUserData(RenderDelegate& renderDelegate);
+    // Returns true when the set of dropped faces changed.
+    bool updateHoles(const pxr::HdMeshTopology& topology);
+    bool dropHoleEntries(const pxr::VtValue& value, const pxr::HdInterpolation& interp,
+                         pxr::VtValue& out) const;
+
+    // MoonRay meshes have no hole attribute, so hole faces are removed from the
+    // topology and from every per-face and per-face-vertex primvar.
+    bool mHasHoles = false;
+    std::vector<int> mFaceRemap;      // old face -> new face, -1 for a hole
+    std::vector<int> mKeptFaces;      // old index of each surviving face
+    std::vector<int> mKeptCorners;    // old face-vertex index of each surviving corner
 };
 
 }

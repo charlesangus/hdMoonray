@@ -18,6 +18,13 @@
 #include "HdmLog.h"
 #include "MurmurHash3.h"
 #include <pxr/base/gf/vec2f.h>
+#include <pxr/base/gf/vec2d.h>
+#include <pxr/base/gf/vec3d.h>
+#include <pxr/base/gf/vec4d.h>
+#include <pxr/base/gf/vec3f.h>
+#include <pxr/base/gf/vec4f.h>
+#include <pxr/base/vt/array.h>
+#include <vector>
 #include <pxr/imaging/hd/meshUtil.h>
 #include <pxr/imaging/pxOsd/tokens.h>
 #include <scene_rdl2/scene/rdl2/Geometry.h>
@@ -138,6 +145,82 @@ Mesh::geometryForMeshLight(RenderDelegate& renderDelegate)
     return mGeometry;
 }
 
+namespace {
+
+template <typename T>
+bool gatherArray(const VtValue& value, const std::vector<int>& indices, VtValue& out)
+{
+    if (!value.IsHolding<VtArray<T>>()) return false;
+    const VtArray<T>& in = value.UncheckedGet<VtArray<T>>();
+    VtArray<T> result(indices.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+        // a short array is left to the consumer's own size checks
+        if (size_t(indices[i]) >= in.size()) return false;
+        result[i] = in[indices[i]];
+    }
+    out = VtValue(std::move(result));
+    return true;
+}
+
+}
+
+bool
+Mesh::updateHoles(const HdMeshTopology& topology)
+{
+    const VtIntArray& holes = topology.GetHoleIndices();
+    const VtIntArray& counts = topology.GetFaceVertexCounts();
+    std::vector<int> faceRemap;
+    std::vector<int> keptFaces;
+    std::vector<int> keptCorners;
+    const bool hasHoles = !holes.empty();
+    if (hasHoles) {
+        std::vector<bool> isHole(counts.size(), false);
+        for (int h : holes) {
+            if (h >= 0 && size_t(h) < isHole.size()) isHole[h] = true;
+        }
+        faceRemap.assign(counts.size(), -1);
+        int corner = 0;
+        for (size_t f = 0; f < counts.size(); ++f) {
+            if (!isHole[f]) {
+                faceRemap[f] = int(keptFaces.size());
+                keptFaces.push_back(int(f));
+                for (int k = 0; k < counts[f]; ++k) keptCorners.push_back(corner + k);
+            }
+            corner += counts[f];
+        }
+    }
+    const bool changed = hasHoles != mHasHoles || keptFaces != mKeptFaces;
+    mHasHoles = hasHoles;
+    mFaceRemap = std::move(faceRemap);
+    mKeptFaces = std::move(keptFaces);
+    mKeptCorners = std::move(keptCorners);
+    return changed;
+}
+
+bool
+Mesh::dropHoleEntries(const VtValue& value, const HdInterpolation& interp, VtValue& out) const
+{
+    if (!mHasHoles || value.IsEmpty()) return false;
+    const std::vector<int>* indices = nullptr;
+    if (interp == HdInterpolationUniform) indices = &mKeptFaces;
+    else if (interp == HdInterpolationFaceVarying) indices = &mKeptCorners;
+    else return false;
+
+    return gatherArray<float>(value, *indices, out) ||
+           gatherArray<double>(value, *indices, out) ||
+           gatherArray<int>(value, *indices, out) ||
+           gatherArray<unsigned int>(value, *indices, out) ||
+           gatherArray<bool>(value, *indices, out) ||
+           gatherArray<GfVec2f>(value, *indices, out) ||
+           gatherArray<GfVec3f>(value, *indices, out) ||
+           gatherArray<GfVec4f>(value, *indices, out) ||
+           gatherArray<GfVec2d>(value, *indices, out) ||
+           gatherArray<GfVec3d>(value, *indices, out) ||
+           gatherArray<GfVec4d>(value, *indices, out) ||
+           gatherArray<std::string>(value, *indices, out) ||
+           gatherArray<TfToken>(value, *indices, out);
+}
+
 void
 Mesh::syncTopology(const HdMeshTopology& topology)
 {
@@ -145,14 +228,24 @@ Mesh::syncTopology(const HdMeshTopology& topology)
     // vertices (points) are copied by base GeometryMixin class
 
     const VtIntArray& faceVertexCounts = topology.GetFaceVertexCounts();
-    geometry()->set(rdlAttrFaceVertexCount,
-                    IntVector(faceVertexCounts.begin(), 
-                              faceVertexCounts.end()));
-
     const VtIntArray& faceVertexIndices = topology.GetFaceVertexIndices();
-    geometry()->set(rdlAttrVerticesByIndex,
-                    IntVector(faceVertexIndices.begin(), 
-                              faceVertexIndices.end()));
+    if (mHasHoles) {
+        IntVector counts;
+        counts.reserve(mKeptFaces.size());
+        for (int f : mKeptFaces) counts.push_back(faceVertexCounts[f]);
+        IntVector indices;
+        indices.reserve(mKeptCorners.size());
+        for (int c : mKeptCorners) indices.push_back(faceVertexIndices[c]);
+        geometry()->set(rdlAttrFaceVertexCount, std::move(counts));
+        geometry()->set(rdlAttrVerticesByIndex, std::move(indices));
+    } else {
+        geometry()->set(rdlAttrFaceVertexCount,
+                        IntVector(faceVertexCounts.begin(),
+                                  faceVertexCounts.end()));
+        geometry()->set(rdlAttrVerticesByIndex,
+                        IntVector(faceVertexIndices.begin(),
+                                  faceVertexIndices.end()));
+    }
 
     TfToken orientation = topology.GetOrientation();
     int rdlOrientation = rdlOrientationRightHanded;
@@ -171,10 +264,15 @@ Mesh::syncTopology(const HdMeshTopology& topology)
     partMaterials.clear();  partMaterials.reserve(geomSubsets.size());
     partPaths.clear();      partPaths.reserve(geomSubsets.size());
     for (const HdGeomSubset& geomSubset : geomSubsets) {
-        partFaceCountList.push_back(int(geomSubset.indices.size()));
+        const size_t first = partFaceIndices.size();
         for (int i : geomSubset.indices) {
-            partFaceIndices.push_back(i);
+            if (!mHasHoles) {
+                partFaceIndices.push_back(i);
+            } else if (i >= 0 && size_t(i) < mFaceRemap.size() && mFaceRemap[i] >= 0) {
+                partFaceIndices.push_back(mFaceRemap[i]);
+            }
         }
+        partFaceCountList.push_back(int(partFaceIndices.size() - first));
         partList.push_back(geomSubset.id.GetName());
         partMaterials.push_back(geomSubset.materialId);
         partPaths.push_back(geomSubset.id);
@@ -303,7 +401,7 @@ Mesh::syncSubdivTags(const PxOsdSubdivTags& tags)
 
 void
 Mesh::primvarChanged(HdSceneDelegate *sceneDelegate, RenderDelegate& renderDelegate,
-                     const TfToken& name,  const VtValue& value,
+                     const TfToken& name,  const VtValue& rawValue,
                      const HdInterpolation& interp, const TfToken& role)
 {
     // Overridden from GeometryMixin to sync primvars that drive RDL object
@@ -314,6 +412,9 @@ Mesh::primvarChanged(HdSceneDelegate *sceneDelegate, RenderDelegate& renderDeleg
     static const TfToken stToken("st");
     static const TfToken uvToken("uv");
     static const TfToken normalToken("normal");
+
+    VtValue filtered;
+    const VtValue& value = dropHoleEntries(rawValue, interp, filtered) ? filtered : rawValue;
 
     if (name == HdTokens->normals || name == normalToken) {
         if (value.IsEmpty()) {
@@ -430,7 +531,14 @@ Mesh::Sync(HdSceneDelegate *sceneDelegate,
     
     _UpdateVisibility(sceneDelegate, dirtyBits);
     _UpdateInstancer(sceneDelegate, dirtyBits);
-    
+
+    // Primvars sync before topology, so the dropped faces must be known first, and
+    // primvars whose face lists changed with them must be re-read.
+    if (HdChangeTracker::IsTopologyDirty(*dirtyBits, GetId()) &&
+        updateHoles(GetMeshTopology(sceneDelegate))) {
+        *dirtyBits |= HdChangeTracker::DirtyPrimvar;
+    }
+
     syncAll(rdlClassMesh, sceneDelegate, renderDelegate, dirtyBits, reprToken);
 
     hdmLogSyncEnd(GetId());
